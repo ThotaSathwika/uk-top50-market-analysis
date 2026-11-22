@@ -1,5 +1,6 @@
 import html
 import itertools
+import time
 
 import networkx as nx
 import pandas as pd
@@ -244,7 +245,8 @@ kpis = [
     ("🌈", "Diversity Score", f"{diversity:.3f}", "unique ÷ entries", AMBER),
     ("🤝", "Collaboration Ratio", f"{collab_ratio:.1f}%", "multi-artist tracks", LIME),
     ("🔞", "Explicit Share", f"{explicit_share:.1f}%", "explicit entries", PINK),
-    ("💿", "Single : Album", f"{single_album_ratio:.2f}", f"{singles:,} vs {albums:,}", CYAN),
+    ("💿", "Single : Album", f"{single_album_ratio:.2f}" if albums else "All singles" if singles else "–",
+     f"{singles:,} vs {albums:,}", CYAN),
     ("🎨", "Content Variety", f"{variety:.3f}", "distinct songs ÷ entries", VIOLET),
 ]
 st.markdown("<div class='kpi-grid'>" + "".join(
@@ -321,7 +323,7 @@ with tabs[0]:
 
 # ---------- Chart race ----------
 with tabs[1]:
-    section("🏁 The artist chart race", "Press ▶ to watch cumulative chart appearances build month by month")
+    section("🏁 The artist chart race", "Press ▶ Play race to watch total appearances build month by month, or drag the slider")
     months = ex["date"].dt.to_period("M")
     monthly = ex.assign(month=months).groupby(["month", "single_artist"]).size().unstack(fill_value=0)
     if len(monthly) < 2:
@@ -332,17 +334,30 @@ with tabs[1]:
         cum["rank"] = cum.groupby("month")["appearances"].rank(method="first", ascending=False)
         race = cum[cum["rank"] <= 10].sort_values(["month", "appearances"])
         names = race["single_artist"].unique()
-        cmap = {a: NEON[i % len(NEON)] for i, a in enumerate(names)}
-        fig = px.bar(race, x="appearances", y="single_artist", orientation="h", color="single_artist",
-                     animation_frame="month", text="appearances", color_discrete_map=cmap,
-                     range_x=[0, race["appearances"].max() * 1.12],
-                     labels={"single_artist": "", "appearances": "Total appearances so far"})
-        fig.update_layout(height=580, showlegend=False, yaxis=dict(categoryorder="total ascending"),
-                          margin=dict(l=150))
-        fig.update_traces(textposition="outside", marker_line_width=0)
-        fig.layout.updatemenus[0].buttons[0].args[1]["frame"]["duration"] = 700
-        fig.layout.updatemenus[0].buttons[0].args[1]["transition"]["duration"] = 500
-        st.plotly_chart(fig, width="stretch", theme=None)
+        cmap = {n: NEON[i % len(NEON)] for i, n in enumerate(names)}
+        month_list = list(race["month"].unique())
+        x_max = race["appearances"].max() * 1.15
+
+        def race_fig(m):
+            r = race[race["month"] == m]
+            fig = go.Figure(go.Bar(x=r["appearances"].tolist(), y=r["single_artist"].tolist(), orientation="h",
+                                   text=r["appearances"].tolist(), textposition="outside",
+                                   marker_color=[cmap[n] for n in r["single_artist"]], marker_line_width=0,
+                                   hovertemplate="%{y}: %{x}<extra></extra>"))
+            fig.update_layout(height=540, title_text=f"📅 {pd.Period(m).strftime('%B %Y')}", margin=dict(l=150),
+                              xaxis=dict(range=[0, x_max], title="Total appearances so far"))
+            return fig
+
+        c1, c2 = st.columns([1, 5])
+        play = c1.button("▶ Play race", type="primary", width="stretch")
+        pick = c2.select_slider("Month", month_list, value=month_list[-1], label_visibility="collapsed")
+        holder = st.empty()
+        if play:
+            for m in month_list:
+                holder.plotly_chart(race_fig(m), width="stretch", theme=None, key=f"race-{m}")
+                time.sleep(0.6)
+        else:
+            holder.plotly_chart(race_fig(pick), width="stretch", theme=None)
         leaders = monthly.idxmax(axis=1)
         insight(f"<b>{leaders.value_counts().index[0]}</b> was the most-charting artist in "
                 f"<b>{leaders.value_counts().iloc[0]} of {len(leaders)}</b> months.")
